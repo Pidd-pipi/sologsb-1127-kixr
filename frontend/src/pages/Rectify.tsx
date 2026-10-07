@@ -15,15 +15,18 @@ import {
   Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { CheckOutlined, ReloadOutlined } from '@ant-design/icons';
+import { CheckOutlined, ReloadOutlined, PhoneOutlined } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import dayjs from 'dayjs';
 import StatusBadge from '../components/common/StatusBadge';
 import EmptyState from '../components/common/EmptyState';
+import MeasureCompare from '../components/common/MeasureCompare';
 import { useInspectionFilter } from '../hooks/useInspectionFilter';
 import { usePointStore } from '../stores/pointStore';
+import { useComplaintStore } from '../stores/complaintStore';
 import { DISTRICTS, FACILITY_TYPES } from '../types/point';
 import { RECTIFY_STATUSES, type RectifyPlan, type RectifyStatus } from '../types/rectify';
+import { compareMeasures, latestInspectionOf } from '../utils/measures';
 import { isOverdue, todayStr } from '../utils/format';
 
 interface RecheckDraft {
@@ -37,6 +40,8 @@ export default function Rectify() {
   const { filter, setFilter, resetFilter, pendingRectifies, pointMap } = useInspectionFilter();
   const rectifies = usePointStore((s) => s.rectifies);
   const updateRectify = usePointStore((s) => s.updateRectify);
+  const inspections = usePointStore((s) => s.inspections);
+  const orders = useComplaintStore((s) => s.orders);
   const [statusFilter, setStatusFilter] = useState<RectifyStatus | ''>('');
   const [editing, setEditing] = useState<RectifyPlan | null>(null);
   const [draft, setDraft] = useState<RecheckDraft>({ status: '已整改', recheckDate: todayStr(), note: '' });
@@ -113,6 +118,22 @@ export default function Rectify() {
     },
     { title: '整改要求', dataIndex: 'requirement', ellipsis: true },
     { title: '责任单位', dataIndex: 'unit', width: 170 },
+    {
+      title: '来源',
+      dataIndex: 'sourceOrderId',
+      width: 150,
+      render: (sourceOrderId: string | undefined) => {
+        if (!sourceOrderId) return <Tag>点位核验</Tag>;
+        const order = orders.find((o) => o.id === sourceOrderId);
+        return (
+          <Space size={4}>
+            <PhoneOutlined />
+            <Link to="/complaints">{order?.code ?? sourceOrderId}</Link>
+            <Tag color="purple">{order?.source ?? '热线工单'}</Tag>
+          </Space>
+        );
+      },
+    },
     {
       title: '整改期限',
       dataIndex: 'deadline',
@@ -253,6 +274,36 @@ export default function Rectify() {
               dataSource={g.items}
               columns={columns}
               rowClassName={(row) => (isOverdue(row.deadline, row.status) ? 'gb-overdue-row' : '')}
+              expandable={{
+                rowExpandable: (row) => Boolean(row.sourceOrderId),
+                expandedRowRender: (row) => {
+                  const order = orders.find((o) => o.id === row.sourceOrderId);
+                  if (!order) return null;
+                  const latest = latestInspectionOf(inspections, row.pointId);
+                  const compare = compareMeasures(
+                    {
+                      slope: row.externalSlope ?? order.slope,
+                      clearWidth: row.externalClearWidth ?? order.clearWidth,
+                    },
+                    latest,
+                  );
+                  return (
+                    <Space direction="vertical" size={6} style={{ width: '100%' }} data-testid={`rectify-measures-${row.id}`}>
+                      <Typography.Text>
+                        来源工单 <Link to="/complaints">{order.code}</Link>（{order.source}，{order.receivedAt}）：{order.content}
+                      </Typography.Text>
+                      <div style={{ maxWidth: 720 }}>
+                        <MeasureCompare result={compare} />
+                      </div>
+                      <Typography.Text type="secondary" className="gb-muted">
+                        {latest
+                          ? `点位最新核验 ${latest.date}：坡度 ${latest.slope}%、净宽 ${latest.clearWidth}cm、结论 ${latest.conclusion}；核验一变此对照立即重算`
+                          : '该点位尚无核验记录'}
+                      </Typography.Text>
+                    </Space>
+                  );
+                },
+              }}
             />
           </Card>
         ))

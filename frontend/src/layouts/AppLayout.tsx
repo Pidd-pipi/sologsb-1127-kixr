@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Layout, Menu, Space, Tag, Typography } from 'antd';
+import { Layout, Menu, Space, Tag, Typography, Badge } from 'antd';
 import {
   HomeOutlined,
   PlusCircleOutlined,
@@ -7,36 +7,59 @@ import {
   NodeIndexOutlined,
   ToolOutlined,
   DatabaseOutlined,
+  PhoneOutlined,
 } from '@ant-design/icons';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { usePointStore } from '../stores/pointStore';
 import { useRouteStore } from '../stores/routeStore';
+import { useComplaintStore } from '../stores/complaintStore';
 
 const { Sider, Content, Header } = Layout;
-
-const MENU = [
-  { key: '/', icon: <HomeOutlined />, label: '核验总览' },
-  { key: '/points/new', icon: <PlusCircleOutlined />, label: '点位登记' },
-  { key: '/routes', icon: <NodeIndexOutlined />, label: '通行路线' },
-  { key: '/map', icon: <EnvironmentOutlined />, label: '设施地图' },
-  { key: '/rectify', icon: <ToolOutlined />, label: '整改清单' },
-];
 
 export default function AppLayout() {
   const location = useLocation();
   const loadPoints = usePointStore((s) => s.load);
   const loadRoutes = useRouteStore((s) => s.load);
+  const loadComplaints = useComplaintStore((s) => s.load);
   const pointCount = usePointStore((s) => s.points.length);
   const inspectionCount = usePointStore((s) => s.inspections.length);
+  const pendingComplaints = useComplaintStore((s) => s.orders.filter((o) => o.status === '待认领').length);
   const hasKey = Boolean((import.meta.env.VITE_AMAP_KEY || '').trim());
 
   useEffect(() => {
     void loadPoints();
     void loadRoutes();
-  }, [loadPoints, loadRoutes]);
+    void loadComplaints();
+  }, [loadPoints, loadRoutes, loadComplaints]);
+
+  const menuItems = [
+    { key: '/', icon: <HomeOutlined />, label: '核验总览' },
+    { key: '/points/new', icon: <PlusCircleOutlined />, label: '点位登记' },
+    { key: '/routes', icon: <NodeIndexOutlined />, label: '通行路线' },
+    { key: '/map', icon: <EnvironmentOutlined />, label: '设施地图' },
+    { key: '/rectify', icon: <ToolOutlined />, label: '整改清单' },
+    {
+      key: '/complaints',
+      icon: <PhoneOutlined />,
+      label: (
+        <span>
+          工单对账
+          {pendingComplaints > 0 ? (
+            <Badge
+              count={pendingComplaints}
+              size="small"
+              offset={[8, -2]}
+              data-testid="menu-pending-badge"
+            />
+          ) : null}
+        </span>
+      ),
+    },
+  ];
 
   const selectedKey =
-    MENU.map((m) => m.key)
+    menuItems
+      .map((m) => m.key)
       .filter((k) => k !== '/' && location.pathname.startsWith(k))
       .sort((a, b) => b.length - a.length)[0] || '/';
 
@@ -54,7 +77,7 @@ export default function AppLayout() {
           theme="dark"
           mode="inline"
           selectedKeys={[selectedKey]}
-          items={MENU.map((m) => ({
+          items={menuItems.map((m) => ({
             key: m.key,
             icon: m.icon,
             label: <Link to={m.key}>{m.label}</Link>,

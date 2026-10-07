@@ -36,10 +36,11 @@ docker compose down
 | --- | --- | --- |
 | `/` | 核验总览：按行政区与设施类型汇总点位数、合格率、待整改数，点击统计块下钻清单 | AccessPoint / Inspection / RectifyPlan |
 | `/points/new` | 点位登记：地图打点或手填经纬度，可同时录入首次核验实测值 | AccessPoint / Inspection |
-| `/points/:id` | 点位详情：地图定位与属性、核验历史、就地新增核验、整改跟踪 | 四个模型 |
-| `/routes` | 通行路线编制：选点自动串联路段，逐段填障碍数/台阶数/路缘高差，输出全线判定 | RouteSegment / AccessPoint |
+| `/points/:id` | 点位详情：地图定位与属性、核验历史、就地新增核验、工单对账与整改跟踪 | 五个模型 |
+| `/routes` | 通行路线编制：选点自动串联路段，逐段填障碍数/台阶数/路缘高差，端点点位最新核验即时并入全线判定 | RouteSegment / AccessPoint / Inspection |
 | `/map` | 设施地图：按设施类型着色渲染点位，点选弹出核验摘要 | AccessPoint / Inspection |
-| `/rectify` | 整改清单：按状态与期限分组、逾期置顶，登记复检结果 | RectifyPlan / AccessPoint |
+| `/rectify` | 整改清单：按状态与期限分组、逾期置顶，来源工单与双源实测对照，登记复检结果 | RectifyPlan / AccessPoint / ComplaintOrder |
+| `/complaints` | 工单对账：热线投诉按「道路+设施类型」配点位，唯一命中直接开整改，对不上/对上多处列待认领由督导员确认 | ComplaintOrder / AccessPoint / RectifyPlan |
 
 ## 数据模型（`src/types/` 独立文件）
 
@@ -48,14 +49,16 @@ docker compose down
 | AccessPoint | `src/types/point.ts` | 点位编号、名称、设施类型、经纬度、行政区、所在道路或建筑、建成年代、养护单位 |
 | Inspection | `src/types/inspection.ts` | 核验日期、核验人、坡度 %、净宽 cm、扶手、盲道连续性、占用情况、结论、问题描述 |
 | RouteSegment | `src/types/route.ts` | 路线名称、起点/终点点位、长度、障碍数、台阶数、路缘高差、是否可轮椅通行 |
-| RectifyPlan | `src/types/rectify.ts` | 点位 id、整改要求、责任单位、整改期限、复检日期、状态 |
+| RectifyPlan | `src/types/rectify.ts` | 点位 id、整改要求、责任单位、整改期限、复检日期、状态、来源工单 id、外部实测快照 |
+| ComplaintOrder | `src/types/complaint.ts` | 热线工单号、来源、反映道路、设施原文措辞、外部实测坡度/净宽、认领点位/方式/整改条目 id、对账说明 |
 
 ## 数据存储
 
 - **IndexedDB（Dexie，库名 `gbaccessmap-db`）**：业务数据。含版本号与升级迁移：
   - `v1` 建 `points` / `inspections` 表；
   - `v2` 增加 `routes` 表与 `pointId` 相关索引；
-  - `v3` 增加 `rectifies` 表，并为历史「不合格」核验补建整改条目。
+  - `v3` 增加 `rectifies` 表，并为历史「不合格」核验补建整改条目；
+  - `v4` 增加 `complaints` 表、`rectifies.sourceOrderId` 索引；补登工单演示点位/核验，并按对账结果预置工单与自动开出的整改条目。
 - **localStorage**：点位登记表单草稿（`gbaccessmap-draft:point-new`）与 UI 偏好（`gbaccessmap-ui`）。
 - 首次打开时自动写入一批示例数据，便于直接体验。
 - 容器无状态：不使用数据库服务、不挂载命名卷，清空浏览器存储即可重置数据。
@@ -80,15 +83,15 @@ sologsb-1127/
     ├── tsconfig*.json
     ├── public/favicon.svg
     └── src/
-        ├── types/{point,inspection,route,rectify}.ts
-        ├── db/index.ts                     # Dexie 封装 + 版本迁移 + 示例数据
-        ├── stores/{pointStore,routeStore,uiStore}.ts
-        ├── components/common/{MapPanel,StatusBadge,FacilityIcon,MeasureInput,EmptyState}.tsx
+        ├── types/{point,inspection,route,rectify,complaint}.ts
+        ├── db/index.ts                     # Dexie 封装 + v1–v4 迁移 + 示例数据
+        ├── stores/{pointStore,routeStore,complaintStore,uiStore}.ts
+        ├── components/common/{MapPanel,StatusBadge,FacilityIcon,MeasureInput,MeasureCompare,EmptyState}.tsx
         ├── hooks/{useAmapLoader,useInspectionFilter,useLocalDraft}.ts
-        ├── pages/{Overview,PointNew,PointDetail,Routes,MapView,Rectify}.tsx
+        ├── pages/{Overview,PointNew,PointDetail,Routes,MapView,Rectify,Complaints}.tsx
         ├── layouts/AppLayout.tsx
         ├── router/index.tsx
-        └── utils/{routeCheck,geo,format}.ts
+        └── utils/{routeCheck,reconcile,measures,geo,format}.ts
 ```
 
 ## 判定阈值（`src/utils/routeCheck.ts`）
@@ -96,3 +99,12 @@ sologsb-1127/
 - 坡度：≤ 5% 合格，> 5% 限期整改，> 8% 不合格；
 - 净宽：≥ 120cm 合格，< 120cm 限期整改，< 90cm 不合格；
 - 路缘高差：≤ 3cm 可轮椅通行，> 6cm 判定不可通行；存在台阶需绕行或增设坡道。
+- 路线端点（含途经点）最新核验为「不合格」时整条路线判不可通行，「限期整改」或未核验给出提示；核验一变路线判定立即重算。
+
+## 工单对账规则（`src/utils/reconcile.ts`、`src/stores/complaintStore.ts`）
+
+- 对账主键为**道路 + 设施类型**：从工单道路/报修原文抽主干路名（剔除「缘石坡道/盲道」等设施词干扰），在点位名称与「所在道路」上做子串匹配；设施措辞先同义归一（如「坡道/路缘坡/电梯」），坡道亚型之间互通。
+- **只对上一处**：自动认领并直接开出整改条目（责任单位取点位养护单位，期限 30 天，幂等：同工单不重复开条）。
+- **对不上或对上多处**（含同一处设施挂到两个点、同分候选）：列为待认领，督导员在 `/complaints` 确认点位后人工认领再写；对不上的也可先补登点位。
+- 待认领工单的候选列表按最新点位**实时重算**；补登点位或新增核验后，新唯一命中的工单自动认领开条。
+- 工单的坡度、净宽是**外部实测**：落整改条目时快照留档（`externalSlope/externalClearWidth`），与点位最新核验值并列展示（`MeasureCompare`），差值超过 0.5 个百分点 / 5cm 标「两边不一致，均保留待核」，不以任一方覆盖另一方。

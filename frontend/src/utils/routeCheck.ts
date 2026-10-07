@@ -70,13 +70,21 @@ export function judgeSegment(seg: Pick<RouteSegment, 'curbHeight' | 'stepCount' 
   return { passable: reasons.length === 0, reasons };
 }
 
-/** 全线判定：逐段判定后汇总 */
+/** 全线判定：逐段判定后汇总；端点点位最新核验结论即时参与判定 */
+export interface VerdictPointContext {
+  /** 点位 id → 名称 */
+  nameOf?: (id: string) => string;
+  /** 点位 id → 最新核验结论（点位核验一变，路线判定立即重算） */
+  latestConclusionOf?: (id: string) => Inspection['conclusion'] | undefined;
+}
+
 export function buildVerdict(
   routeName: string,
   segments: Pick<
     RouteSegment,
     'curbHeight' | 'stepCount' | 'obstacleCount' | 'length' | 'order' | 'fromPointId' | 'toPointId'
   >[],
+  context: VerdictPointContext = {},
 ): RouteVerdict {
   const ordered = [...segments].sort((a, b) => a.order - b.order);
   const totalLength = Math.round(ordered.reduce((n, s) => n + (Number(s.length) || 0), 0) * 10) / 10;
@@ -84,12 +92,31 @@ export function buildVerdict(
   const totalSteps = ordered.reduce((n, s) => n + (Number(s.stepCount) || 0), 0);
   const maxCurbHeight = ordered.reduce((n, s) => Math.max(n, Number(s.curbHeight) || 0), 0);
   const reasons: string[] = [];
+  const warnings: string[] = [];
   ordered.forEach((s) => {
     const r = judgeSegment(s);
     if (!r.passable) {
       reasons.push(`第 ${s.order} 段：${r.reasons.join('；')}`);
     }
   });
+
+  // 端点（含起终点、途经点）最新核验即时并入：不合格即阻断，限期整改/未核验给提示
+  const latestConclusionOf = context.latestConclusionOf;
+  if (latestConclusionOf) {
+    const endpointIds = Array.from(new Set(ordered.flatMap((s) => [s.fromPointId, s.toPointId])));
+    endpointIds.forEach((pid) => {
+      const label = context.nameOf ? context.nameOf(pid) : pid;
+      const conclusion = latestConclusionOf(pid);
+      if (conclusion === '不合格') {
+        reasons.push(`点位「${label}」最新核验为不合格，途经设施无法通行`);
+      } else if (conclusion === '限期整改') {
+        warnings.push(`点位「${label}」最新核验为限期整改，通行条件可能变化`);
+      } else if (!conclusion) {
+        warnings.push(`点位「${label}」尚无核验记录，建议补核后再发布路线`);
+      }
+    });
+  }
+
   return {
     routeName,
     passable: reasons.length === 0 && ordered.length > 0,
@@ -98,5 +125,6 @@ export function buildVerdict(
     totalSteps,
     maxCurbHeight,
     reasons: ordered.length === 0 ? ['尚未串联路段'] : reasons,
+    warnings,
   };
 }

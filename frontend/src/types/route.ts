@@ -30,5 +30,8 @@ export interface RouteVerdict {
   totalObstacles: number;
   totalSteps: number;
   maxCurbHeight: number;
+  /** 阻断性原因（路段指标越限或端点点位最新核验为不合格），存在即不可通行 */
   reasons: string[];
+  /** 非阻断提示（端点点位最新核验为限期整改 / 未核验） */
+  warnings: string[];
 }

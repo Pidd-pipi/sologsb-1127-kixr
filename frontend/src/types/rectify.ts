@@ -16,6 +16,12 @@ export interface RectifyPlan {
   /** 复检日期 YYYY-MM-DD，未复检为空字符串 */
   recheckDate: string;
   status: RectifyStatus;
+  /** 来源：热线工单自动/人工开出时记录工单 id；核验结论自动生成时为空 */
+  sourceOrderId?: string;
+  /** 外部实测快照：坡度 %（来自热线工单，未提供为 null） */
+  externalSlope?: number | null;
+  /** 外部实测快照：净宽 cm（来自热线工单，未提供为 null） */
+  externalClearWidth?: number | null;
   createdAt: string;
 }
 

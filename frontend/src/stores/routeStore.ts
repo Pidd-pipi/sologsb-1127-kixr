@@ -6,6 +6,7 @@ import { makeId, toPlain } from '../utils/format';
 import { judgeSegment, buildVerdict } from '../utils/routeCheck';
 import { segmentLength } from '../utils/geo';
 import type { RouteVerdict } from '../types/route';
+import { usePointStore } from './pointStore';
 
 /** 编辑中的路段（尚未落库） */
 export interface DraftSegment {
@@ -121,7 +122,13 @@ export const useRouteStore = create<RouteState>((set, get) => ({
 
   computeVerdict: () => {
     const { draftSegments, draftName } = get();
-    const verdict = buildVerdict(draftName, draftSegments);
+    const pointState = usePointStore.getState();
+    const nameOf = (id: string) => pointState.points.find((p) => p.id === id)?.name ?? id;
+    const latestConclusionOf = (id: string) =>
+      pointState
+        .inspections.filter((i) => i.pointId === id)
+        .sort((a, b) => (a.date < b.date ? 1 : -1))[0]?.conclusion;
+    const verdict = buildVerdict(draftName, draftSegments, { nameOf, latestConclusionOf });
     set({ verdict });
     return verdict;
   },

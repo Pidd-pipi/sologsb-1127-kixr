@@ -4,6 +4,15 @@ import type { AccessPoint, AccessPointDraft } from '../types/point';
 import type { Inspection, InspectionDraft } from '../types/inspection';
 import type { RectifyPlan, RectifyPlanDraft } from '../types/rectify';
 import { makeId, toPlain, todayStr } from '../utils/format';
+import { useComplaintStore } from './complaintStore';
+
+/**
+ * 点位或核验一变，未认领工单立即按最新点位重新比对。
+ * 两 store 均只在动作函数内相互引用，模块初始化期不触碰对方导出，循环依赖安全。
+ */
+function triggerOrderRevalidate(): void {
+  void useComplaintStore.getState().revalidatePending();
+}
 
 interface PointState {
   points: AccessPoint[];
@@ -61,6 +70,7 @@ export const usePointStore = create<PointState>((set, get) => ({
     });
     await db.points.put(point);
     set((s) => ({ points: [...s.points, point].sort((a, b) => a.code.localeCompare(b.code)) }));
+    triggerOrderRevalidate();
     return point;
   },
 
@@ -90,6 +100,8 @@ export const usePointStore = create<PointState>((set, get) => ({
         });
       }
     }
+    // 点位核验一变：整改条目与路线判定在各页面按最新核验即时重算，未认领工单重新比对
+    triggerOrderRevalidate();
     return inspection;
   },
 

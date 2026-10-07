@@ -14,6 +14,7 @@ import {
   Statistic,
   Table,
   Tag,
+  Tooltip,
   Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
@@ -28,6 +29,7 @@ import { buildVerdict, judgeSegment, CURB_FAIL, CURB_PASS } from '../utils/route
 export default function Routes() {
   const { message } = App.useApp();
   const points = usePointStore((s) => s.points);
+  const inspections = usePointStore((s) => s.inspections);
   const {
     segments,
     draftName,
@@ -190,10 +192,17 @@ export default function Routes() {
       list.push(s);
       byName.set(s.routeName, list);
     }
+    // 路线判定随点位最新核验即时重算：核验一变，已保存路线的判定也同步刷新
+    const latestConclusionOf = (id: string) =>
+      inspections
+        .filter((i) => i.pointId === id)
+        .sort((a, b) => (a.date < b.date ? 1 : -1))[0]?.conclusion;
     const rows: RouteVerdict[] = [];
-    byName.forEach((list, name) => rows.push(buildVerdict(name, list)));
+    byName.forEach((list, name) =>
+      rows.push(buildVerdict(name, list, { nameOf, latestConclusionOf })),
+    );
     return rows;
-  }, [segments]);
+  }, [segments, inspections, points]);
 
   return (
     <div>
@@ -337,6 +346,21 @@ export default function Routes() {
                     }
                   />
                 )}
+                {draftVerdict.warnings.length ? (
+                  <Alert
+                    type="info"
+                    showIcon
+                    data-testid="verdict-warnings"
+                    message="点位核验提示（已按最新核验即时重算）"
+                    description={
+                      <ul style={{ margin: 0, paddingInlineStart: 18 }}>
+                        {draftVerdict.warnings.map((w) => (
+                          <li key={w}>{w}</li>
+                        ))}
+                      </ul>
+                    }
+                  />
+                ) : null}
                 <Typography.Text type="secondary" className="gb-muted">
                   判定阈值：路缘高差 ≤ {CURB_PASS}cm 可通行，&gt; {CURB_FAIL}cm 判定不可通行；存在台阶即需绕行。
                 </Typography.Text>
@@ -350,17 +374,38 @@ export default function Routes() {
             )}
           </Card>
 
-          <Card title="已编制路线判定" size="small" style={{ marginTop: 16 }}>
+          <Card
+            title="已编制路线判定"
+            size="small"
+            style={{ marginTop: 16 }}
+            extra={
+              <Typography.Text type="secondary" className="gb-muted">
+                按点位最新核验即时重算
+              </Typography.Text>
+            }
+          >
             {savedVerdicts.length ? (
               <Space direction="vertical" size={8} style={{ width: '100%' }}>
                 {savedVerdicts.map((v) => (
-                  <Space key={v.routeName} size={8} wrap>
-                    <StatusBadge value={v.passable ? '可通行' : '不可通行'} kind="route" />
-                    <Typography.Text>{v.routeName}</Typography.Text>
-                    <Tag>{v.totalLength} m</Tag>
-                    <Tag>台阶 {v.totalSteps}</Tag>
-                    <Tag>障碍 {v.totalObstacles}</Tag>
-                  </Space>
+                  <Tooltip
+                    key={v.routeName}
+                    title={
+                      <Space direction="vertical" size={2}>
+                        {v.reasons.length ? v.reasons.map((x) => <span key={x}>阻断：{x}</span>) : null}
+                        {v.warnings.length ? v.warnings.map((x) => <span key={x}>提示：{x}</span>) : null}
+                        {!v.reasons.length && !v.warnings.length ? <span>各段与端点点位核验均满足通行条件</span> : null}
+                      </Space>
+                    }
+                  >
+                    <Space size={8} wrap style={{ cursor: 'help' }} data-testid={`saved-verdict-${v.routeName}`}>
+                      <StatusBadge value={v.passable ? '可通行' : '不可通行'} kind="route" />
+                      <Typography.Text>{v.routeName}</Typography.Text>
+                      <Tag>{v.totalLength} m</Tag>
+                      <Tag>台阶 {v.totalSteps}</Tag>
+                      <Tag>障碍 {v.totalObstacles}</Tag>
+                      {v.warnings.length ? <Tag color="warning">核验提示 {v.warnings.length}</Tag> : null}
+                    </Space>
+                  </Tooltip>
                 ))}
               </Space>
             ) : (

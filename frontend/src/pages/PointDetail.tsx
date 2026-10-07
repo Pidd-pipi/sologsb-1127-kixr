@@ -25,10 +25,13 @@ import MeasureInput from '../components/common/MeasureInput';
 import StatusBadge from '../components/common/StatusBadge';
 import FacilityIcon from '../components/common/FacilityIcon';
 import EmptyState from '../components/common/EmptyState';
+import MeasureCompare from '../components/common/MeasureCompare';
 import { usePointStore } from '../stores/pointStore';
+import { useComplaintStore } from '../stores/complaintStore';
 import { OCCUPIED_LEVELS, type Inspection, type OccupiedLevel } from '../types/inspection';
 import type { RectifyPlan } from '../types/rectify';
 import { judgeInspection } from '../utils/routeCheck';
+import { compareMeasures } from '../utils/measures';
 import { addDays, isOverdue, todayStr } from '../utils/format';
 
 interface InlineInspection {
@@ -51,6 +54,7 @@ export default function PointDetail() {
   const loaded = usePointStore((s) => s.loaded);
   const addInspection = usePointStore((s) => s.addInspection);
   const addRectify = usePointStore((s) => s.addRectify);
+  const orders = useComplaintStore((s) => s.orders);
 
   const point = useMemo(() => points.find((p) => p.id === id), [points, id]);
   const history = useMemo(
@@ -64,6 +68,10 @@ export default function PointDetail() {
     () =>
       rectifies.filter((r) => r.pointId === id).sort((a, b) => (a.deadline < b.deadline ? -1 : 1)),
     [rectifies, id],
+  );
+  const pointOrders = useMemo(
+    () => orders.filter((o) => o.pointId === id).sort((a, b) => (a.receivedAt < b.receivedAt ? 1 : -1)),
+    [orders, id],
   );
 
   const [form, setForm] = useState<InlineInspection>(() => ({
@@ -184,6 +192,19 @@ export default function PointDetail() {
 
   const rectifyColumns: ColumnsType<RectifyPlan> = [
     { title: '整改要求', dataIndex: 'requirement', ellipsis: true },
+    {
+      title: '来源',
+      dataIndex: 'sourceOrderId',
+      width: 150,
+      render: (sourceOrderId?: string) =>
+        sourceOrderId ? (
+          <Link to="/complaints">
+            <Tag color="purple">热线工单</Tag>
+          </Link>
+        ) : (
+          <Tag>点位核验</Tag>
+        ),
+    },
     { title: '责任单位', dataIndex: 'unit', width: 170 },
     {
       title: '整改期限',
@@ -404,6 +425,30 @@ export default function PointDetail() {
           </Card>
         </Col>
       </Row>
+
+      {pointOrders.length ? (
+        <Card title="热线工单对账（外部实测 vs 本点核验）" size="small" style={{ marginTop: 16 }} data-testid="point-orders">
+          <Space direction="vertical" size={12} style={{ width: '100%' }}>
+            {pointOrders.map((o) => {
+              const compare = compareMeasures({ slope: o.slope, clearWidth: o.clearWidth }, latest);
+              return (
+                <Card key={o.id} size="small" type="inner" title={`${o.code} · ${o.source} · ${o.receivedAt}`}>
+                  <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                    <Typography.Text>{o.content}</Typography.Text>
+                    <div style={{ maxWidth: 720 }}>
+                      <MeasureCompare result={compare} />
+                    </div>
+                    <Typography.Text type="secondary" className="gb-muted">
+                      {o.claimMode === 'auto' ? '自动对账命中本点位' : `督导员 ${o.claimedBy} 人工认领`}
+                      {o.matchNote ? ` · ${o.matchNote}` : ''}
+                    </Typography.Text>
+                  </Space>
+                </Card>
+              );
+            })}
+          </Space>
+        </Card>
+      ) : null}
 
       <Card title="整改跟踪" size="small" style={{ marginTop: 16 }}>
         <Divider style={{ margin: '0 0 12px' }} />
