@@ -1,5 +1,6 @@
 import type { Inspection, InspectionConclusion, OccupiedLevel } from '../types/inspection';
-import type { RouteSegment, RouteVerdict } from '../types/route';
+import type { AccessPoint } from '../types/point';
+import type { RoutePointIssue, RouteSegment, RouteVerdict } from '../types/route';
 
 /** 阈值常量：依据《无障碍设计规范》常用核验口径 */
 export const SLOPE_PASS = 5; // 坡度 ≤ 5% 为合格
@@ -77,6 +78,12 @@ export function buildVerdict(
     RouteSegment,
     'curbHeight' | 'stepCount' | 'obstacleCount' | 'length' | 'order' | 'fromPointId' | 'toPointId'
   >[],
+  context?: {
+    /** 路线串联到的点位（端点与途经点） */
+    points?: AccessPoint[];
+    /** 每个点位的最新核验，点位核验一变，判定立即重算 */
+    latestByPoint?: Map<string, Inspection>;
+  },
 ): RouteVerdict {
   const ordered = [...segments].sort((a, b) => a.order - b.order);
   const totalLength = Math.round(ordered.reduce((n, s) => n + (Number(s.length) || 0), 0) * 10) / 10;
@@ -90,6 +97,39 @@ export function buildVerdict(
       reasons.push(`第 ${s.order} 段：${r.reasons.join('；')}`);
     }
   });
+
+  // 点位最新核验参与路线判定：取路线串联到的全部点位，不合格阻断、限期整改警示
+  const warnings: string[] = [];
+  const pointIssues: RoutePointIssue[] = [];
+  const latestByPoint = context?.latestByPoint;
+  if (context?.points?.length && latestByPoint) {
+    const byId = new Map(context.points.map((p) => [p.id, p]));
+    const seen = new Set<string>();
+    const chainIds = ordered.length
+      ? ordered.flatMap((s) => [s.fromPointId, s.toPointId])
+      : context.points.map((p) => p.id);
+    for (const pid of chainIds) {
+      if (seen.has(pid)) continue;
+      seen.add(pid);
+      const latest = latestByPoint.get(pid);
+      if (!latest || latest.conclusion === '合格') continue;
+      const r = rejudge(latest);
+      const point = byId.get(pid);
+      const label = point ? point.name : pid;
+      const issue: RoutePointIssue = {
+        pointId: pid,
+        conclusion: latest.conclusion,
+        date: latest.date,
+        reasons: r.reasons,
+        blocking: latest.conclusion === '不合格',
+      };
+      pointIssues.push(issue);
+      const detail = `点位「${label}」${latest.date} 核验为${latest.conclusion}：${r.reasons.join('；')}`;
+      if (issue.blocking) reasons.push(detail);
+      else warnings.push(detail);
+    }
+  }
+
   return {
     routeName,
     passable: reasons.length === 0 && ordered.length > 0,
@@ -98,5 +138,7 @@ export function buildVerdict(
     totalSteps,
     maxCurbHeight,
     reasons: ordered.length === 0 ? ['尚未串联路段'] : reasons,
+    warnings,
+    pointIssues,
   };
 }

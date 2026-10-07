@@ -112,6 +112,21 @@ export default function Rectify() {
       render: (_, row) => pointMap.get(row.pointId)?.district ?? '—',
     },
     { title: '整改要求', dataIndex: 'requirement', ellipsis: true },
+    {
+      title: '来源',
+      dataIndex: 'source',
+      width: 110,
+      render: (v: RectifyPlan['source'], row) =>
+        v === '热线工单' ? (
+          <Tag color="processing" data-testid={`source-${row.id}`}>
+            12345 工单
+          </Tag>
+        ) : (
+          <Typography.Text type="secondary" className="gb-muted">
+            {v || '核验'}
+          </Typography.Text>
+        ),
+    },
     { title: '责任单位', dataIndex: 'unit', width: 170 },
     {
       title: '整改期限',

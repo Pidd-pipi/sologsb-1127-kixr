@@ -6,6 +6,7 @@ import { makeId, toPlain } from '../utils/format';
 import { judgeSegment, buildVerdict } from '../utils/routeCheck';
 import { segmentLength } from '../utils/geo';
 import type { RouteVerdict } from '../types/route';
+import { usePointStore } from './pointStore';
 
 /** 编辑中的路段（尚未落库） */
 export interface DraftSegment {
@@ -35,7 +36,7 @@ interface RouteState {
   buildChainSegments: (points: AccessPoint[]) => void;
   updateDraftSegment: (key: string, patch: Partial<DraftSegment>) => void;
   removeDraftSegment: (key: string) => void;
-  computeVerdict: () => RouteVerdict;
+  computeVerdict: () => Promise<RouteVerdict>;
   saveRoute: () => Promise<number>;
   resetDraft: () => void;
 }
@@ -119,9 +120,18 @@ export const useRouteStore = create<RouteState>((set, get) => ({
       verdict: null,
     })),
 
-  computeVerdict: () => {
+  computeVerdict: async () => {
     const { draftSegments, draftName } = get();
-    const verdict = buildVerdict(draftName, draftSegments);
+    const pointState = usePointStore.getState();
+    const latestByPoint = new Map<string, (typeof pointState.inspections)[number]>();
+    for (const i of pointState.inspections) {
+      const cur = latestByPoint.get(i.pointId);
+      if (!cur || cur.date < i.date) latestByPoint.set(i.pointId, i);
+    }
+    const verdict = buildVerdict(draftName, draftSegments, {
+      points: pointState.points,
+      latestByPoint,
+    });
     set({ verdict });
     return verdict;
   },

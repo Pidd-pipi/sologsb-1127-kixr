@@ -7,10 +7,12 @@ import {
   NodeIndexOutlined,
   ToolOutlined,
   DatabaseOutlined,
+  PhoneOutlined,
 } from '@ant-design/icons';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { usePointStore } from '../stores/pointStore';
 import { useRouteStore } from '../stores/routeStore';
+import { useOrderStore } from '../stores/orderStore';
 
 const { Sider, Content, Header } = Layout;
 
@@ -19,6 +21,7 @@ const MENU = [
   { key: '/points/new', icon: <PlusCircleOutlined />, label: '点位登记' },
   { key: '/routes', icon: <NodeIndexOutlined />, label: '通行路线' },
   { key: '/map', icon: <EnvironmentOutlined />, label: '设施地图' },
+  { key: '/orders', icon: <PhoneOutlined />, label: '工单对账' },
   { key: '/rectify', icon: <ToolOutlined />, label: '整改清单' },
 ];
 
@@ -26,14 +29,19 @@ export default function AppLayout() {
   const location = useLocation();
   const loadPoints = usePointStore((s) => s.load);
   const loadRoutes = useRouteStore((s) => s.load);
+  const loadOrders = useOrderStore((s) => s.load);
   const pointCount = usePointStore((s) => s.points.length);
   const inspectionCount = usePointStore((s) => s.inspections.length);
+  const pendingOrders = useOrderStore((s) => s.orders.filter((o) => o.status === '待认领').length);
   const hasKey = Boolean((import.meta.env.VITE_AMAP_KEY || '').trim());
 
   useEffect(() => {
-    void loadPoints();
-    void loadRoutes();
-  }, [loadPoints, loadRoutes]);
+    // 点位数据先就绪，再跑工单对账（对账依赖点位集合）
+    void (async () => {
+      await loadPoints();
+      await Promise.all([loadRoutes(), loadOrders()]);
+    })();
+  }, [loadPoints, loadRoutes, loadOrders]);
 
   const selectedKey =
     MENU.map((m) => m.key)
@@ -57,7 +65,16 @@ export default function AppLayout() {
           items={MENU.map((m) => ({
             key: m.key,
             icon: m.icon,
-            label: <Link to={m.key}>{m.label}</Link>,
+            label: (
+              <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Link to={m.key}>{m.label}</Link>
+                {m.key === '/orders' && pendingOrders > 0 && (
+                  <Tag color="orange" style={{ marginInlineEnd: 0, fontSize: 12 }} data-testid="menu-pending-orders">
+                    {pendingOrders}
+                  </Tag>
+                )}
+              </span>
+            ),
           }))}
         />
       </Sider>

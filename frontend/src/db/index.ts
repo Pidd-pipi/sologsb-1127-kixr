@@ -3,6 +3,7 @@ import type { AccessPoint } from '../types/point';
 import type { Inspection } from '../types/inspection';
 import type { RouteSegment } from '../types/route';
 import type { RectifyPlan } from '../types/rectify';
+import type { ComplaintOrder } from '../types/order';
 import { addDays, makeId, todayStr, toPlain } from '../utils/format';
 import { judgeInspection } from '../utils/routeCheck';
 
@@ -13,12 +14,14 @@ export const DB_NAME = 'gbaccessmap-db';
  * v1 建 points / inspections
  * v2 加 routes 表与 pointId 索引
  * v3 加 rectifies 表，并为历史不合格核验补建整改条目
+ * v4 加 orders（12345 热线工单）表；rectifies 增加 source/orderId 来源字段
  */
 class AccessMapDb extends Dexie {
   points!: Table<AccessPoint, string>;
   inspections!: Table<Inspection, string>;
   routes!: Table<RouteSegment, string>;
   rectifies!: Table<RectifyPlan, string>;
+  orders!: Table<ComplaintOrder, string>;
 
   constructor() {
     super(DB_NAME);
@@ -68,8 +71,28 @@ class AccessMapDb extends Dexie {
             deadline: addDays(insp.date || todayStr(), 30),
             recheckDate: '',
             status: '待整改',
+            source: '核验',
+            orderId: '',
             createdAt: new Date().toISOString(),
           });
+        }
+      });
+    this.version(4)
+      .stores({
+        points: 'id, code, facilityType, district, name',
+        inspections: 'id, pointId, date, conclusion',
+        routes: 'id, routeName, fromPointId, toPointId, order',
+        rectifies: 'id, pointId, status, deadline, source, orderId',
+        orders: 'id, code, status, pointId, receivedAt',
+      })
+      .upgrade(async (tx) => {
+        // v4：历史整改条目没有来源字段，统一补成「核验」
+        const table = tx.table<RectifyPlan, string>('rectifies');
+        const rows = await table.toArray();
+        for (const row of rows) {
+          if (!row.source || !('orderId' in row)) {
+            await table.update(row.id, { source: '核验', orderId: '' });
+          }
         }
       });
   }
@@ -174,6 +197,18 @@ const SEED_POINTS: Omit<AccessPoint, 'createdAt' | 'updatedAt'>[] = [
     builtYear: 2013,
     maintainUnit: '轨道交通运营部',
   },
+  {
+    id: 'pt-1009',
+    code: 'WZ-2024-009',
+    name: '莲花池东路盲道（西段）',
+    facilityType: '盲道',
+    lng: 116.3172,
+    lat: 39.8979,
+    district: '丰台区',
+    location: '莲花池东路北侧辅路近湾子路口',
+    builtYear: 2017,
+    maintainUnit: '市政道路养护二所',
+  },
 ];
 
 interface SeedInspection {
@@ -277,6 +312,17 @@ const SEED_INSPECTIONS: SeedInspection[] = [
     occupied: '无',
     problem: '',
   },
+  {
+    pointId: 'pt-1009',
+    date: '2025-05-22',
+    inspector: '督导员 王岚',
+    slope: 3.6,
+    clearWidth: 122,
+    hasHandrail: false,
+    tactileContinuous: true,
+    occupied: '无',
+    problem: '西段盲道提示砖磨损，但通行净宽基本达标',
+  },
 ];
 
 interface SeedRoute {
@@ -296,6 +342,60 @@ const SEED_ROUTES: SeedRoute[] = [
     obstacleCount: 1,
     stepCount: 0,
     curbHeight: 2,
+  },
+];
+
+/**
+ * 12345 热线工单种子：
+ * - ord-seed-1 朝阳公园南路 / 轮椅坡道 → 唯一命中 pt-1004（自动开单）；
+ * - ord-seed-2 莲花池东路 / 盲道 → 命中 pt-1007、pt-1009 两处（待认领，多处命中）；
+ * - ord-seed-3 未登记道路 + 类型 → 0 命中（待认领，无命中，登记点位后自动消解）。
+ */
+interface SeedOrder {
+  id: string;
+  code: string;
+  receivedAt: string;
+  reporter: string;
+  road: string;
+  facilityType: ComplaintOrder['facilityType'];
+  content: string;
+  slope: number | null;
+  clearWidth: number | null;
+}
+
+const SEED_ORDERS: SeedOrder[] = [
+  {
+    id: 'ord-seed-1',
+    code: '12345-2025-1102',
+    receivedAt: addDays(todayStr(), -3),
+    reporter: '市民吴先生（轮椅使用者家属）',
+    road: '朝阳公园南路',
+    facilityType: '轮椅坡道',
+    content: '南门西侧坡道太陡，轮椅上去费劲，坡底还有共享单车挡着，实测坡度约 9.1%。',
+    slope: 9.1,
+    clearWidth: null,
+  },
+  {
+    id: 'ord-seed-2',
+    code: '12345-2025-1107',
+    receivedAt: addDays(todayStr(), -2),
+    reporter: '市民刘女士（视障居民代表）',
+    road: '莲花池东路',
+    facilityType: '盲道',
+    content: '莲花池东路北侧盲道被占用、走不通，商铺货架占了一大半，实测净宽只有 78cm。',
+    slope: null,
+    clearWidth: 78,
+  },
+  {
+    id: 'ord-seed-3',
+    code: '12345-2025-1113',
+    receivedAt: addDays(todayStr(), -1),
+    reporter: '匿名市民来电',
+    road: '广宁村新立街',
+    facilityType: '缘石坡道',
+    content: '新立街路口缘石坡道高差太大，电动轮椅下不来，容易前倾，请尽快处理。',
+    slope: null,
+    clearWidth: null,
   },
 ];
 
@@ -353,6 +453,8 @@ function buildSeed() {
       deadline: addDays(today, -21),
       recheckDate: '',
       status: '待整改',
+      source: '核验',
+      orderId: '',
       createdAt: now,
     },
     {
@@ -363,6 +465,8 @@ function buildSeed() {
       deadline: addDays(today, -6),
       recheckDate: '',
       status: '待整改',
+      source: '核验',
+      orderId: '',
       createdAt: now,
     },
     {
@@ -373,6 +477,8 @@ function buildSeed() {
       deadline: addDays(today, 18),
       recheckDate: '',
       status: '待整改',
+      source: '核验',
+      orderId: '',
       createdAt: now,
     },
     {
@@ -383,10 +489,31 @@ function buildSeed() {
       deadline: addDays(today, -40),
       recheckDate: addDays(today, -12),
       status: '已整改',
+      source: '核验',
+      orderId: '',
       createdAt: now,
     },
   ];
-  return { points, inspections, routes, rectifies };
+  const orders: ComplaintOrder[] = SEED_ORDERS.map((o) => ({
+    id: o.id,
+    code: o.code,
+    receivedAt: o.receivedAt,
+    reporter: o.reporter,
+    road: o.road,
+    facilityType: o.facilityType,
+    content: o.content,
+    slope: o.slope,
+    clearWidth: o.clearWidth,
+    // 种子工单一律先落「待认领」，由对账逻辑在首屏自动比对：唯一命中立即开单
+    status: '待认领',
+    pointId: '',
+    matchMethod: null,
+    rectifyId: '',
+    claimNote: '',
+    createdAt: now,
+    updatedAt: now,
+  }));
+  return { points, inspections, routes, rectifies, orders };
 }
 
 /** 首次打开时写入示例数据；已有数据则跳过 */
@@ -394,12 +521,21 @@ export async function ensureSeed(): Promise<void> {
   const count = await db.points.count();
   if (count > 0) return;
   const seed = toPlain(buildSeed());
-  await db.transaction('rw', db.points, db.inspections, db.routes, db.rectifies, async () => {
-    await db.points.bulkPut(seed.points);
-    await db.inspections.bulkPut(seed.inspections);
-    await db.routes.bulkPut(seed.routes);
-    await db.rectifies.bulkPut(seed.rectifies);
-  });
+  await db.transaction(
+    'rw',
+    db.points,
+    db.inspections,
+    db.routes,
+    db.rectifies,
+    db.orders,
+    async () => {
+      await db.points.bulkPut(seed.points);
+      await db.inspections.bulkPut(seed.inspections);
+      await db.routes.bulkPut(seed.routes);
+      await db.rectifies.bulkPut(seed.rectifies);
+      await db.orders.bulkPut(seed.orders);
+    },
+  );
 }
 
 export { makeId };

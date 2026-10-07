@@ -28,6 +28,7 @@ import { buildVerdict, judgeSegment, CURB_FAIL, CURB_PASS } from '../utils/route
 export default function Routes() {
   const { message } = App.useApp();
   const points = usePointStore((s) => s.points);
+  const inspections = usePointStore((s) => s.inspections);
   const {
     segments,
     draftName,
@@ -45,13 +46,32 @@ export default function Routes() {
   } = useRouteStore();
   const [saving, setSaving] = useState(false);
 
+  /** 每个点位最新一次核验（点位核验一变，路线判定随此 Map 立即重算） */
+  const latestByPoint = useMemo(() => {
+    const map = new Map(inspections.map((i) => [i.pointId, i]));
+    for (const i of inspections) {
+      const cur = map.get(i.pointId);
+      if (!cur || cur.date < i.date) map.set(i.pointId, i);
+    }
+    return map;
+  }, [inspections]);
+
+  const verdictContext = useMemo(
+    () => ({ points, latestByPoint }),
+    [points, latestByPoint],
+  );
+
   const pointOptions = useMemo(
     () => points.map((p) => ({ value: p.id, label: `${p.code} ${p.name}` })),
     [points],
   );
   const nameOf = (id: string) => points.find((p) => p.id === id)?.name ?? id;
 
-  const draftVerdict = verdict ?? null;
+  // 全线判定始终按当前草稿 + 点位最新核验派生：核验数据一变立即重算，无需手点按钮
+  const draftVerdict: RouteVerdict | null = useMemo(() => {
+    if (!draftSegments.length) return verdict;
+    return buildVerdict(draftName || '未命名路线', draftSegments, verdictContext);
+  }, [draftSegments, draftName, verdict, verdictContext]);
 
   const handleBuild = () => {
     if (chain.length < 2) {
@@ -191,9 +211,9 @@ export default function Routes() {
       byName.set(s.routeName, list);
     }
     const rows: RouteVerdict[] = [];
-    byName.forEach((list, name) => rows.push(buildVerdict(name, list)));
+    byName.forEach((list, name) => rows.push(buildVerdict(name, list, verdictContext)));
     return rows;
-  }, [segments]);
+  }, [segments, verdictContext]);
 
   return (
     <div>
@@ -337,6 +357,21 @@ export default function Routes() {
                     }
                   />
                 )}
+                {draftVerdict.warnings.length > 0 && (
+                  <Alert
+                    type="info"
+                    showIcon
+                    message="沿途点位核验提示（限期整改，不阻断通行）"
+                    description={
+                      <ul style={{ margin: 0, paddingInlineStart: 18 }}>
+                        {draftVerdict.warnings.map((w) => (
+                          <li key={w}>{w}</li>
+                        ))}
+                      </ul>
+                    }
+                    data-testid="verdict-warnings"
+                  />
+                )}
                 <Typography.Text type="secondary" className="gb-muted">
                   判定阈值：路缘高差 ≤ {CURB_PASS}cm 可通行，&gt; {CURB_FAIL}cm 判定不可通行；存在台阶即需绕行。
                 </Typography.Text>
@@ -352,15 +387,30 @@ export default function Routes() {
 
           <Card title="已编制路线判定" size="small" style={{ marginTop: 16 }}>
             {savedVerdicts.length ? (
-              <Space direction="vertical" size={8} style={{ width: '100%' }}>
+              <Space direction="vertical" size={10} style={{ width: '100%' }}>
                 {savedVerdicts.map((v) => (
-                  <Space key={v.routeName} size={8} wrap>
-                    <StatusBadge value={v.passable ? '可通行' : '不可通行'} kind="route" />
-                    <Typography.Text>{v.routeName}</Typography.Text>
-                    <Tag>{v.totalLength} m</Tag>
-                    <Tag>台阶 {v.totalSteps}</Tag>
-                    <Tag>障碍 {v.totalObstacles}</Tag>
-                  </Space>
+                  <div key={v.routeName} data-testid={`saved-verdict-${v.routeName}`}>
+                    <Space size={8} wrap>
+                      <StatusBadge value={v.passable ? '可通行' : '不可通行'} kind="route" />
+                      <Typography.Text>{v.routeName}</Typography.Text>
+                      <Tag>{v.totalLength} m</Tag>
+                      <Tag>台阶 {v.totalSteps}</Tag>
+                      <Tag>障碍 {v.totalObstacles}</Tag>
+                    </Space>
+                    {v.reasons.length > 0 && (
+                      <Typography.Paragraph
+                        type="danger"
+                        style={{ margin: '4px 0 0', fontSize: 12 }}
+                      >
+                        {v.reasons.join('；')}
+                      </Typography.Paragraph>
+                    )}
+                    {v.warnings.length > 0 && (
+                      <Typography.Paragraph type="secondary" style={{ margin: '4px 0 0', fontSize: 12 }}>
+                        提示：{v.warnings.join('；')}
+                      </Typography.Paragraph>
+                    )}
+                  </div>
                 ))}
               </Space>
             ) : (

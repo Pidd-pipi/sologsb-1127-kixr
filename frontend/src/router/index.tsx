@@ -6,6 +6,7 @@ import PointDetail from '../pages/PointDetail';
 import Routes from '../pages/Routes';
 import MapView from '../pages/MapView';
 import Rectify from '../pages/Rectify';
+import Orders from '../pages/Orders';
 
 export const router = createBrowserRouter([
   {
@@ -17,6 +18,7 @@ export const router = createBrowserRouter([
       { path: 'points/:id', element: <PointDetail /> },
       { path: 'routes', element: <Routes /> },
       { path: 'map', element: <MapView /> },
+      { path: 'orders', element: <Orders /> },
       { path: 'rectify', element: <Rectify /> },
       { path: '*', element: <Navigate to="/" replace /> },
     ],

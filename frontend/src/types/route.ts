@@ -22,6 +22,17 @@ export interface RouteSegment {
 
 export type RouteSegmentDraft = Omit<RouteSegment, 'id' | 'createdAt' | 'wheelchairPassable'>;
 
+/** 路线端点 / 途经点位的最新核验问题（点位核验一变即随路线判定重算） */
+export interface RoutePointIssue {
+  pointId: string;
+  /** 最新核验结论 */
+  conclusion: string;
+  date: string;
+  reasons: string[];
+  /** 不合格阻断通行；限期整改仅作警示 */
+  blocking: boolean;
+}
+
 /** 全线判定结果 */
 export interface RouteVerdict {
   routeName: string;
@@ -30,5 +41,10 @@ export interface RouteVerdict {
   totalObstacles: number;
   totalSteps: number;
   maxCurbHeight: number;
+  /** 阻断原因：路段判定不达标 或 端点点位核验不合格 */
   reasons: string[];
+  /** 警示原因：端点点位最新结论为限期整改（不直接阻断，但提示轮椅使用者） */
+  warnings: string[];
+  /** 参与判定的点位核验问题明细 */
+  pointIssues: RoutePointIssue[];
 }

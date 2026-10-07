@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import {
   App,
+  Alert,
   Button,
   Card,
   Col,
@@ -26,8 +27,11 @@ import StatusBadge from '../components/common/StatusBadge';
 import FacilityIcon from '../components/common/FacilityIcon';
 import EmptyState from '../components/common/EmptyState';
 import { usePointStore } from '../stores/pointStore';
+import { useOrderStore } from '../stores/orderStore';
 import { OCCUPIED_LEVELS, type Inspection, type OccupiedLevel } from '../types/inspection';
 import type { RectifyPlan } from '../types/rectify';
+import { SOURCE_INSPECTION, SOURCE_ORDER } from '../types/order';
+import { diffOrderWithInspection } from '../utils/measureDiff';
 import { judgeInspection } from '../utils/routeCheck';
 import { addDays, isOverdue, todayStr } from '../utils/format';
 
@@ -51,6 +55,7 @@ export default function PointDetail() {
   const loaded = usePointStore((s) => s.loaded);
   const addInspection = usePointStore((s) => s.addInspection);
   const addRectify = usePointStore((s) => s.addRectify);
+  const orders = useOrderStore((s) => s.orders);
 
   const point = useMemo(() => points.find((p) => p.id === id), [points, id]);
   const history = useMemo(
@@ -64,6 +69,17 @@ export default function PointDetail() {
     () =>
       rectifies.filter((r) => r.pointId === id).sort((a, b) => (a.deadline < b.deadline ? -1 : 1)),
     [rectifies, id],
+  );
+
+  /** 挂到本点位的热线工单，其外部实测随最新核验即时对撞 */
+  const linkedOrders = useMemo(() => orders.filter((o) => o.pointId === id), [orders, id]);
+  const orderDiffs = useMemo(
+    () =>
+      linkedOrders.map((o) => ({
+        order: o,
+        diff: diffOrderWithInspection(o, history[0]),
+      })),
+    [linkedOrders, history],
   );
 
   const [form, setForm] = useState<InlineInspection>(() => ({
@@ -184,6 +200,15 @@ export default function PointDetail() {
 
   const rectifyColumns: ColumnsType<RectifyPlan> = [
     { title: '整改要求', dataIndex: 'requirement', ellipsis: true },
+    {
+      title: '来源',
+      dataIndex: 'source',
+      width: 110,
+      render: (v: RectifyPlan['source']) =>
+        v === '热线工单' ? <Tag color="processing">12345 工单</Tag> : (
+          <Typography.Text type="secondary" className="gb-muted">{v || '核验'}</Typography.Text>
+        ),
+    },
     { title: '责任单位', dataIndex: 'unit', width: 170 },
     {
       title: '整改期限',
@@ -422,6 +447,66 @@ export default function PointDetail() {
           />
         )}
       </Card>
+
+      {linkedOrders.length > 0 && (
+        <Card
+          title="关联 12345 工单与实测对撞"
+          size="small"
+          style={{ marginTop: 16 }}
+          data-testid="linked-orders"
+        >
+          <Space direction="vertical" size={12} style={{ width: '100%' }}>
+            {orderDiffs.map(({ order, diff }) => (
+              <div key={order.id} data-testid={`linked-order-${order.id}`}>
+                <Space size={8} wrap style={{ marginBottom: 6 }}>
+                  <Tag color="processing">{order.code}</Tag>
+                  <Typography.Text strong>{order.road}</Typography.Text>
+                  <Typography.Text type="secondary" className="gb-muted">
+                    {order.receivedAt} 受理 · {order.reporter}
+                  </Typography.Text>
+                </Space>
+                <Typography.Paragraph type="secondary" style={{ marginBottom: 6 }}>
+                  {order.content}
+                </Typography.Paragraph>
+                {diff.noInspection && (order.slope !== null || order.clearWidth !== null) && (
+                  <Alert
+                    type="info"
+                    showIcon
+                    style={{ marginTop: 4 }}
+                    message="点位尚无核验记录，工单外部实测待现场复核"
+                  />
+                )}
+                {[diff.slope, diff.clearWidth]
+                  .filter((c) => c.orderValue !== null)
+                  .map((c) => (
+                    <Space key={c.field} size={8} wrap style={{ marginBottom: 4 }}>
+                      <Typography.Text type="secondary">{c.label}</Typography.Text>
+                      <Tag color="processing">
+                        {SOURCE_ORDER}：{c.orderValue}
+                        {c.unit}
+                      </Tag>
+                      {c.inspectionValue !== null ? (
+                        <Tag color={c.conflict ? 'error' : 'success'}>
+                          {SOURCE_INSPECTION}（{c.inspectionDate}）：{c.inspectionValue}
+                          {c.unit}
+                        </Tag>
+                      ) : (
+                        <Tag>点位暂无{c.label}核验</Tag>
+                      )}
+                      {c.conflict && (
+                        <Tag color="warning">
+                          对不上 · 差 {c.delta! > 0 ? '+' : ''}
+                          {c.delta}
+                          {c.unit}，两边留档待复测
+                        </Tag>
+                      )}
+                    </Space>
+                  ))}
+              </div>
+            ))}
+          </Space>
+        </Card>
+      )}
     </div>
   );
 }

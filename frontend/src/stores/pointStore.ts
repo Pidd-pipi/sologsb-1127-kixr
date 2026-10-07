@@ -4,6 +4,7 @@ import type { AccessPoint, AccessPointDraft } from '../types/point';
 import type { Inspection, InspectionDraft } from '../types/inspection';
 import type { RectifyPlan, RectifyPlanDraft } from '../types/rectify';
 import { makeId, toPlain, todayStr } from '../utils/format';
+import { useOrderStore } from './orderStore';
 
 interface PointState {
   points: AccessPoint[];
@@ -17,6 +18,7 @@ interface PointState {
   addInspection: (draft: InspectionDraft) => Promise<Inspection>;
   addRectify: (draft: RectifyPlanDraft) => Promise<RectifyPlan>;
   updateRectify: (id: string, patch: Partial<RectifyPlan>) => Promise<void>;
+  refreshRectifies: () => Promise<void>;
   getPoint: (id: string) => AccessPoint | undefined;
   inspectionsOf: (pointId: string) => Inspection[];
   rectifiesOf: (pointId: string) => RectifyPlan[];
@@ -61,6 +63,8 @@ export const usePointStore = create<PointState>((set, get) => ({
     });
     await db.points.put(point);
     set((s) => ({ points: [...s.points, point].sort((a, b) => a.code.localeCompare(b.code)) }));
+    // 点位一变化：未认领工单按新点位集重新比对（可能从无命中变为唯一命中自动开单）
+    await useOrderStore.getState().reconcile();
     return point;
   },
 
@@ -87,15 +91,21 @@ export const usePointStore = create<PointState>((set, get) => ({
           deadline: todayStr(),
           recheckDate: '',
           status: '待整改',
+          source: '核验',
+          orderId: '',
         });
       }
     }
+    // 点位核验一变：由该点位工单开出的整改条目立即按最新结论重算（已整改 → 复发）
+    await useOrderStore.getState().handleInspectionChanged(inspection);
     return inspection;
   },
 
   addRectify: async (draft) => {
     const plan: RectifyPlan = toPlain({
       ...draft,
+      source: draft.source ?? '手工',
+      orderId: draft.orderId ?? '',
       id: makeId('rct'),
       createdAt: new Date().toISOString(),
     });
@@ -112,6 +122,11 @@ export const usePointStore = create<PointState>((set, get) => ({
     set((s) => ({
       rectifies: s.rectifies.map((r) => (r.id === id ? { ...r, ...plain } : r)),
     }));
+  },
+
+  refreshRectifies: async () => {
+    const rectifies = await db.rectifies.toArray();
+    set({ rectifies: [...rectifies].sort((a, b) => (a.deadline < b.deadline ? -1 : 1)) });
   },
 
   getPoint: (id) => get().points.find((p) => p.id === id),
